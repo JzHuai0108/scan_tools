@@ -83,6 +83,10 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
       "pose_stamped", 5);
   }
 
+  if (publish_odometry_) {
+    odometry_publisher_ = nh.advertise<nav_msgs::Odometry>("odom", 5);
+  }
+
   if (publish_pose_with_covariance_)
   {
     pose_with_covariance_publisher_  = nh_.advertise<geometry_msgs::PoseWithCovariance>(
@@ -189,7 +193,9 @@ void LaserScanMatcher::initParams()
   // if true, will subscribe to TwistStamped msgs on /vel
   if (!nh_private_.getParam ("stamped_vel", stamped_vel_))
     stamped_vel_ = false;
-
+  if (!nh_private_.getParam ("scan_range_min", scan_range_min_))
+    scan_range_min_ = 0.1;
+  ROS_INFO_STREAM("Scan range min is " << scan_range_min_);
   // **** How to publish the output?
   // tf (fixed_frame->base_frame),
   // pose message (pose of base frame in the fixed frame)
@@ -200,6 +206,8 @@ void LaserScanMatcher::initParams()
     publish_pose_ = true;
   if (!nh_private_.getParam ("publish_pose_stamped", publish_pose_stamped_))
     publish_pose_stamped_ = false;
+  if (!nh_private_.getParam ("publish_odometry", publish_odometry_))
+    publish_odometry_ = false;
   if (!nh_private_.getParam ("publish_pose_with_covariance", publish_pose_with_covariance_))
     publish_pose_with_covariance_ = false;
   if (!nh_private_.getParam ("publish_pose_with_covariance_stamped", publish_pose_with_covariance_stamped_))
@@ -533,6 +541,18 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
       pose_stamped_publisher_.publish(pose_stamped_msg);
     }
+    if (publish_odometry_) {
+      // stamped Odometry message
+      nav_msgs::Odometry::Ptr odometry_msg;
+      odometry_msg = boost::make_shared<nav_msgs::Odometry>();
+
+      odometry_msg->header.stamp    = time;
+      odometry_msg->header.frame_id = fixed_frame_;
+      odometry_msg->child_frame_id  = base_frame_;
+
+      tf::poseTFToMsg(f2b_, odometry_msg->pose.pose);
+      odometry_publisher_.publish(odometry_msg);
+    }
     if (publish_pose_with_covariance_)
     {
       // unstamped PoseWithCovariance message
@@ -724,7 +744,7 @@ void LaserScanMatcher::laserScanToLDP(const sensor_msgs::LaserScan::ConstPtr& sc
 
     double r = scan_msg->ranges[i];
 
-    if (r > scan_msg->range_min && r < scan_msg->range_max)
+    if ((r > scan_msg->range_min && r > scan_range_min_) && r < scan_msg->range_max)
     {
       // fill in laser scan data
 

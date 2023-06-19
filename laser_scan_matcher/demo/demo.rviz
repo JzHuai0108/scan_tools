@@ -75,9 +75,10 @@ Visualization Manager:
       Queue Size: 10
       Selectable: true
       Size (Pixels): 3
-      Size (m): 0.01
+      Size (m): 0.100
       Style: Flat Squares
       Topic: /scan
+      Unreliable: false
       Use Fixed Frame: true
       Use rainbow: true
       Value: true
@@ -86,11 +87,9 @@ Visualization Manager:
       Frame Timeout: 15
       Frames:
         All Enabled: true
-        base_link:
-          Value: true
         laser:
           Value: true
-        world:
+        odom:
           Value: true
       Marker Scale: 1
       Name: TF
@@ -98,16 +97,16 @@ Visualization Manager:
       Show Axes: true
       Show Names: true
       Tree:
-        world:
-          base_link:
-            laser:
-              {}
+        odom:
+          laser:
+            {}
       Update Interval: 0
       Value: true
   Enabled: true
   Global Options:
     Background Color: 0; 0; 0
-    Fixed Frame: world
+    Default Light: true
+    Fixed Frame: odom
     Frame Rate: 30
   Name: root
   Tools:

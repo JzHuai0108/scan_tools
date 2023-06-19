@@ -93,6 +93,7 @@ class LaserScanMatcher
 
     ros::Publisher  pose_publisher_;
     ros::Publisher  pose_stamped_publisher_;
+    ros::Publisher  odometry_publisher_;
     ros::Publisher  pose_with_covariance_publisher_;
     ros::Publisher  pose_with_covariance_stamped_publisher_;
 
@@ -107,10 +108,11 @@ class LaserScanMatcher
     bool publish_pose_;
     bool publish_pose_with_covariance_;
     bool publish_pose_stamped_;
+    bool publish_odometry_;
     bool publish_pose_with_covariance_stamped_;
     std::vector<double> position_covariance_;
     std::vector<double> orientation_covariance_;
-
+    double scan_range_min_;
     bool use_cloud_input_;
 
     double kf_dist_linear_;
