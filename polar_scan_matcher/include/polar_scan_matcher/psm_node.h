@@ -36,6 +36,11 @@
 #include <ros/ros.h>
 #include <tf/transform_broadcaster.h>
 #include <tf/transform_listener.h>
+
+#include <tf2_ros/static_transform_broadcaster.h>
+#include <geometry_msgs/TransformStamped.h>
+#include <tf2/LinearMath/Quaternion.h>
+
 #include <sensor_msgs/LaserScan.h>
 #include <sensor_msgs/Imu.h>
 #include <geometry_msgs/Pose2D.h>
@@ -61,6 +66,8 @@ class PSMNode
     tf::Transform prevWorldToBase_;
     tf::Transform baseToLaser_;
     tf::Transform laserToBase_;
+
+    tf2_ros::StaticTransformBroadcaster static_broadcaster_;
 
     bool initialized_;
     double totalDuration_;
@@ -113,5 +120,7 @@ class PSMNode
     PSMNode();
     virtual ~PSMNode();
 };
+
+geometry_msgs::TransformStamped get_base_link_T_laser();
 
 #endif // POLAR_SCAN_MATCHER_PSM_NODE_H

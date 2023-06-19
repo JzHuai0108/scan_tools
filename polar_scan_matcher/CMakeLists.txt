@@ -23,6 +23,10 @@ add_executable(psm_node src/psm_node.cpp)
 target_link_libraries(psm_node polar_scan_matcher
                                ${catkin_LIBRARIES})
 
+add_executable(psm_nodex src/main.cpp src/psm_nodex.cpp)
+target_link_libraries(psm_nodex polar_scan_matcher
+                               ${catkin_LIBRARIES})
+
 install(TARGETS polar_scan_matcher
     ARCHIVE DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
     LIBRARY DESTINATION ${CATKIN_PACKAGE_LIB_DESTINATION}
