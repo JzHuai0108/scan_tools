@@ -36,6 +36,7 @@
  */
 
 #include <laser_scan_matcher/laser_scan_matcher.h>
+#include <laser_scan_matcher/static_transforms.h>
 #include <pcl_conversions/pcl_conversions.h>
 #include <boost/assign.hpp>
 
@@ -144,7 +145,7 @@ void LaserScanMatcher::initParams()
     base_frame_ = "base_link";
   if (!nh_private_.getParam ("fixed_frame", fixed_frame_))
     fixed_frame_ = "world";
-
+  laser_frame_ = "laser";
   // **** input type - laser scan, or point clouds?
   // if false, will subscribe to LaserScan msgs on /scan.
   // if true, will subscribe to PointCloud2 msgs on /cloud
@@ -620,8 +621,12 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
     if (publish_tf_)
     {
-      tf::StampedTransform transform_msg (f2b_, time, fixed_frame_, base_frame_);
-      tf_broadcaster_.sendTransform (transform_msg);
+      tf::Transform odom_T_base_footprint = f2b_ * get_base_link_T_base_footprint("turtlebot3_burger");
+      tf::StampedTransform odom_T_base_footprint_stamped(odom_T_base_footprint, time, fixed_frame_, "base_footprint");
+      tf_broadcaster_.sendTransform(odom_T_base_footprint_stamped);
+
+      tf::StampedTransform basescan_T_laser_stamped(get_base_scan_T_laser("turtlebot3_burger"), time, "base_scan", laser_frame_);
+      tf_broadcaster_.sendTransform(basescan_T_laser_stamped);
     }
   }
   else
@@ -793,21 +798,26 @@ void LaserScanMatcher::createCache (const sensor_msgs::LaserScan::ConstPtr& scan
 bool LaserScanMatcher::getBaseToLaserTf (const std::string& frame_id)
 {
   ros::Time t = ros::Time::now();
-
-  tf::StampedTransform base_to_laser_tf;
-  try
-  {
-    tf_listener_.waitForTransform(
-      base_frame_, frame_id, t, ros::Duration(1.0));
-    tf_listener_.lookupTransform (
-      base_frame_, frame_id, t, base_to_laser_tf);
+  const bool use_internal_tf = true;
+  laser_frame_ = frame_id;
+  if (use_internal_tf) {
+    base_to_laser_ = get_base_link_T_laser("turtlebot3_burger");
+  } else {
+    tf::StampedTransform base_to_laser_tf;
+    try
+    {
+      tf_listener_.waitForTransform(
+        base_frame_, frame_id, t, ros::Duration(1.0));
+      tf_listener_.lookupTransform (
+        base_frame_, frame_id, t, base_to_laser_tf);
+    }
+    catch (tf::TransformException ex)
+    {
+      ROS_WARN("Could not get initial transform from base to laser frame, %s", ex.what());
+      return false;
+    }
+    base_to_laser_ = base_to_laser_tf;
   }
-  catch (tf::TransformException ex)
-  {
-    ROS_WARN("Could not get initial transform from base to laser frame, %s", ex.what());
-    return false;
-  }
-  base_to_laser_ = base_to_laser_tf;
   laser_to_base_ = base_to_laser_.inverse();
 
   return true;

@@ -101,6 +101,7 @@ class LaserScanMatcher
 
     std::string base_frame_;
     std::string fixed_frame_;
+    std::string laser_frame_;
     double cloud_range_min_;
     double cloud_range_max_;
     double cloud_res_;
