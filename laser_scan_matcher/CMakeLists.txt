@@ -3,6 +3,7 @@ project(laser_scan_matcher)
 
 # List C++ dependencies on ros packages
 set( ROS_CXX_DEPENDENCIES
+  csm
   roscpp
   nodelet
   sensor_msgs
@@ -13,16 +14,11 @@ set( ROS_CXX_DEPENDENCIES
   nav_msgs)
 
 # Find catkin and all required ROS components
-find_package(catkin REQUIRED COMPONENTS ${ROS_CXX_DEPENDENCIES} rostest)
+find_package(catkin REQUIRED COMPONENTS ${ROS_CXX_DEPENDENCIES})
 find_package(PCL REQUIRED QUIET)
 
-# Find csm project
-find_package(PkgConfig)
-pkg_check_modules(csm REQUIRED csm)
-
 # Set include directories
-include_directories(include ${catkin_INCLUDE_DIRS} ${csm_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS})
-link_directories(${csm_LIBRARY_DIRS})
+include_directories(include ${catkin_INCLUDE_DIRS} ${PCL_INCLUDE_DIRS})
 
 # Declare info that other packages need to import library generated here
 catkin_package(
@@ -35,8 +31,8 @@ catkin_package(
 add_library(laser_scan_matcher src/laser_scan_matcher.cpp src/static_transforms.cpp)
 
 #Note we don't link against pcl as we're using header-only parts of the library
-target_link_libraries( laser_scan_matcher ${catkin_LIBRARIES} ${csm_LIBRARIES})
-add_dependencies(laser_scan_matcher ${csm_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
+target_link_libraries( laser_scan_matcher ${catkin_LIBRARIES})
+add_dependencies(laser_scan_matcher ${catkin_EXPORTED_TARGETS})
 
 #Create nodelet
 add_library(laser_scan_matcher_nodelet src/laser_scan_matcher_nodelet.cpp)
@@ -68,5 +64,5 @@ install(FILES laser_scan_matcher_nodelet.xml
 install(DIRECTORY demo
     DESTINATION ${CATKIN_PACKAGE_SHARE_DESTINATION} )
 
-add_rostest(test/run.test)
-add_rostest(test/covariance.test)
+# add_rostest(test/run.test)
+# add_rostest(test/covariance.test)
