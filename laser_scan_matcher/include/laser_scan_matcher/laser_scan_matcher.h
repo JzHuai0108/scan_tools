@@ -55,7 +55,8 @@
 #include <pcl/filters/voxel_grid.h>
 #include <pcl_ros/point_cloud.h>
 
-#include <csm/csm_all.h>  // csm defines min and max, but Eigen complains
+// including csm must use quotes for muting melodic errors.
+#include "csm/csm_all.h"  // csm defines min and max, but Eigen complains
 #undef min
 #undef max
 
