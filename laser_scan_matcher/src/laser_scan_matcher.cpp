@@ -66,7 +66,8 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
   initialized_(false),
   received_imu_(false),
   received_odom_(false),
-  received_vel_(false)
+  received_vel_(false),
+  latest_vel_time_(0, 0)
 {
   ROS_INFO("Starting LaserScanMatcher");
 
@@ -142,12 +143,12 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
   }
   if (use_vel_)
   {
-    if (stamped_vel_)
+    // if (stamped_vel_)
       vel_subscriber_ = nh_.subscribe(
         "vel", 1, &LaserScanMatcher::velStmpCallback, this);
-    else
-      vel_subscriber_ = nh_.subscribe(
-        "vel", 1, &LaserScanMatcher::velCallback, this);
+    // else
+    //   vel_subscriber_ = nh_.subscribe(
+    //     "vel", 1, &LaserScanMatcher::velCallback, this);
   }
 }
 
@@ -205,6 +206,8 @@ void LaserScanMatcher::initParams()
     use_odom_ = true;
   if (!nh_private_.getParam ("use_vel", use_vel_))
     use_vel_ = false;
+  if (!nh_private_.getParam ("undistort_scan", undistort_scan_))
+    undistort_scan_ = false;
 
   // **** Are velocity input messages stamped?
   // if false, will subscribe to Twist msgs on /vel
@@ -383,19 +386,18 @@ void LaserScanMatcher::odomCallback(const nav_msgs::Odometry::ConstPtr& odom_msg
   }
 }
 
-void LaserScanMatcher::velCallback(const geometry_msgs::Twist::ConstPtr& twist_msg)
-{
-  boost::mutex::scoped_lock(mutex_);
-  latest_vel_msg_ = *twist_msg;
-
-  received_vel_ = true;
-}
+// void LaserScanMatcher::velCallback(const geometry_msgs::Twist::ConstPtr& twist_msg)
+// {
+//   boost::mutex::scoped_lock(mutex_);
+//   latest_vel_msg_ = *twist_msg;
+//   received_vel_ = true;
+// }
 
 void LaserScanMatcher::velStmpCallback(const geometry_msgs::TwistStamped::ConstPtr& twist_msg)
 {
   boost::mutex::scoped_lock(mutex_);
   latest_vel_msg_ = twist_msg->twist;
-
+  latest_vel_time_ = twist_msg->header.stamp;
   received_vel_ = true;
 }
 
@@ -424,6 +426,80 @@ void LaserScanMatcher::velStmpCallback(const geometry_msgs::TwistStamped::ConstP
 //   processScan(curr_ldp_scan, cloud_header.stamp);
 // }
 
+// assumes that the lidar has z axis along the gravity direction.
+// assumes that min angle is roughly -pi, and max angle is roughly +pi.
+bool MotionCompensation(
+    const sensor_msgs::LaserScan::ConstPtr &msg,
+    const geometry_msgs::Twist &vel_lidar,
+    LDP ldp) {
+  if (msg->ranges.size() != ldp->nrays) {
+    fprintf(stderr, "Inconsistent msg and LDP!\n");
+    return false;
+  }
+
+  double invinc = 1.0 / msg->angle_increment;
+
+	int * ldvalid        = alloc_int_array(ldp->nrays, 0);
+	double * ldreadings     = alloc_double_array(ldp->nrays, std::numeric_limits<double>::quiet_NaN());
+	double * ldtheta        = alloc_double_array(ldp->nrays, std::numeric_limits<double>::quiet_NaN());
+
+  for (int i = 0; i < ldp->nrays; i++) {
+    if (ldp->valid[i] != 1)
+      continue;
+
+    double pt = ldp->readings[i];
+    double dt = msg->time_increment * i;
+    double angle = msg->angle_increment * i + msg->angle_min;
+    double pr_ch_x = dt * vel_lidar.linear.x;
+    double pr_ch_y = dt * vel_lidar.linear.y;
+    double pr_ch_a = dt * vel_lidar.angular.z;
+    if      (pr_ch_a >= M_PI) pr_ch_a -= 2.0 * M_PI;
+    else if (pr_ch_a < -M_PI) pr_ch_a += 2.0 * M_PI;
+
+    //polar to Cartesian
+    tf::Vector3 current_sensor_vector(pt * cos(angle), pt * sin(angle), 1);
+
+    //Convert to the first time coordinate system
+    tf::Transform pr_ch;
+    createTfFromXYTheta(pr_ch_x, pr_ch_y, pr_ch_a, pr_ch);
+    tf::Vector3 lidar_sensor_vector = pr_ch * current_sensor_vector;
+    double lx = lidar_sensor_vector[0];
+    double ly = lidar_sensor_vector[1];
+
+    //cartesian to polar
+    double new_range = std::hypot(lx, ly);
+    double new_angle = std::atan2(ly, lx);
+    if (new_angle > M_PI + angle) {
+      new_angle -= M_PI * 2;
+    } else if (new_angle + M_PI < angle) {
+      new_angle += M_PI * 2;
+    }
+    int angle_id = std::round((new_angle - msg->angle_min) * invinc);
+    if (angle_id < ldp->nrays && angle_id >= 0) {
+      ldvalid[angle_id] = 1;
+      ldreadings[angle_id] = new_range;
+      ldtheta[angle_id] = new_angle;
+    }
+  }
+  // fill theta for valid == 0
+  for (int i = 0; i < ldp->nrays; ++i) {
+    if (ldvalid[i] == 0)
+      ldtheta[i] = msg->angle_increment * i + msg->angle_min;
+  }
+
+  free(ldp->valid);
+  free(ldp->readings);
+  free(ldp->theta);
+  ldp->valid = ldvalid;
+  ldp->readings = ldreadings;
+  ldp->theta = ldtheta;
+  if (ldvalid[ldp->nrays - 1]) {
+    ldp->max_theta = ldtheta[ldp->nrays - 1];
+  }
+  return true;
+}
+
+
 void LaserScanMatcher::scanCallback (const sensor_msgs::LaserScan::ConstPtr& scan_msg)
 {
   // **** if first scan, cache the tf from base to the scanner
@@ -442,10 +518,22 @@ void LaserScanMatcher::scanCallback (const sensor_msgs::LaserScan::ConstPtr& sca
     laserScanToLDP(scan_msg, prev_ldp_scan_);
     last_icp_time_ = scan_msg->header.stamp;
     initialized_ = true;
+    return;
   }
 
   LDP curr_ldp_scan;
   laserScanToLDP(scan_msg, curr_ldp_scan);
+  // strangely, motion compensation from the const vel model leads to worse results.
+  if (undistort_scan_ && received_vel_) {
+    double dt = std::fabs((scan_msg->header.stamp - latest_vel_time_).toSec());
+    if (dt > 0.5) {
+      fprintf(stderr, "Too old velocity dismissed with dt %.3f!\n", dt);
+    } else {
+      geometry_msgs::Twist vel_lidar = latest_vel_msg_;
+      transformTwist(laser_to_base_, vel_lidar);
+      MotionCompensation(scan_msg, vel_lidar, curr_ldp_scan);
+    }
+  }
   processScan(curr_ldp_scan, scan_msg->header.stamp);
 }
 
@@ -487,13 +575,11 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
   createTfFromXYTheta(pr_ch_x, pr_ch_y, pr_ch_a, pr_ch);
 
   // account for the change since the last kf, in the fixed frame
-
-  pr_ch = pr_ch * (f2b_ * f2b_kf_.inverse());
+  pr_ch = f2b_kf_.inverse() * f2b_ * pr_ch;  // base_kf_T_base_current
 
   // the predicted change of the laser's position, in the laser frame
-
   tf::Transform pr_ch_l;
-  pr_ch_l = laser_to_base_ * f2b_.inverse() * pr_ch * f2b_ * base_to_laser_ ;
+  pr_ch_l = laser_to_base_ * pr_ch * base_to_laser_ ;  // laser_kf_T_laser_current
 
   input_.first_guess[0] = pr_ch_l.getOrigin().getX();
   input_.first_guess[1] = pr_ch_l.getOrigin().getY();
@@ -525,15 +611,20 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
   {
 
     // the correction of the laser's position, in the laser frame
-    tf::Transform corr_ch_l;
+    tf::Transform corr_ch_l;  // laser_kf_T_laser_current
     createTfFromXYTheta(output_.x[0], output_.x[1], output_.x[2], corr_ch_l);
 
     // the correction of the base's position, in the base frame
-    corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;
+    corr_ch = base_to_laser_ * corr_ch_l * laser_to_base_;  // base_kf_T_base_current
 
     // update the pose in the world frame
+    tf::Transform old_f2b = f2b_;
     f2b_ = f2b_kf_ * corr_ch;
 
+    computeTwist(old_f2b, f2b_, dt, latest_vel_msg_);
+
+    latest_vel_time_ = time;
+    received_vel_ = true;
     // **** publish
 
     if (publish_pose_)
@@ -648,6 +739,8 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
   }
   else
   {
+    latest_vel_time_ = ros::Time(0, 0);
+    received_vel_ = false;
     corr_ch.setIdentity();
     ROS_WARN("Error in scan matching");
   }
@@ -853,7 +946,7 @@ void LaserScanMatcher::getPrediction(double& pr_ch_x, double& pr_ch_y,
   pr_ch_a = 0.0;
 
   // **** use velocity (for example from ab-filter)
-  if (use_vel_)
+  if (use_vel_ && received_vel_)
   {
     pr_ch_x = dt * latest_vel_msg_.linear.x;
     pr_ch_y = dt * latest_vel_msg_.linear.y;
@@ -894,7 +987,7 @@ void LaserScanMatcher::getPrediction(double& pr_ch_x, double& pr_ch_y,
   }
 }
 
-void LaserScanMatcher::createTfFromXYTheta(
+void createTfFromXYTheta(
   double x, double y, double theta, tf::Transform& t)
 {
   t.setOrigin(tf::Vector3(x, y, 0.0));
@@ -903,4 +996,28 @@ void LaserScanMatcher::createTfFromXYTheta(
   t.setRotation(q);
 }
 
+void computeTwist(const tf::Transform &W_T_Bp, const tf::Transform &W_T_Bc, 
+    double dt, geometry_msgs::Twist &twist) {
+  tf::Transform Bp_T_Bc = W_T_Bp.inverse() * W_T_Bc;
+  double invdt = 1.0 / dt;
+  twist.linear.x = Bp_T_Bc.getOrigin().getX() * invdt;
+  twist.linear.y = Bp_T_Bc.getOrigin().getY() * invdt;
+  twist.linear.z = 0;
+  double dyaw = tf::getYaw(Bp_T_Bc.getRotation());
+  twist.angular.x = 0;
+  twist.angular.y = 0;
+  twist.angular.z = dyaw * invdt;
+}
+
+
+void transformTwist(const tf::Transform & L_T_B, geometry_msgs::Twist &v_B) {
+  tf::Vector3 lv_L = tf::quatRotate(L_T_B.getRotation(), tf::Vector3(v_B.linear.x, v_B.linear.y, v_B.linear.z));
+  v_B.linear.x = lv_L[0];
+  v_B.linear.y = lv_L[1];
+  v_B.linear.z = lv_L[2];
+  tf::Vector3 av_L = tf::quatRotate(L_T_B.getRotation(), tf::Vector3(v_B.angular.x, v_B.angular.y, v_B.angular.z));
+  v_B.angular.x = av_L[0];
+  v_B.angular.y = av_L[1];
+  v_B.angular.z = av_L[2];
+}
 } // namespace scan_tools

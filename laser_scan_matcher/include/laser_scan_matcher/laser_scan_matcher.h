@@ -119,6 +119,7 @@ class LaserScanMatcher
     bool use_imu_;
     bool use_odom_;
     bool use_vel_;
+    bool undistort_scan_;
     bool stamped_vel_;
 
     // **** state variables
@@ -141,6 +142,7 @@ class LaserScanMatcher
     nav_msgs::Odometry last_used_odom_msg_;
 
     geometry_msgs::Twist latest_vel_msg_;
+    ros::Time latest_vel_time_;
 
     std::vector<double> a_cos_;
     std::vector<double> a_sin_;
@@ -171,9 +173,13 @@ class LaserScanMatcher
     void getPrediction(double& pr_ch_x, double& pr_ch_y,
                        double& pr_ch_a, double dt);
 
-    void createTfFromXYTheta(double x, double y, double theta, tf::Transform& t);
-};
 
+};
+void createTfFromXYTheta(double x, double y, double theta, tf::Transform& t);
+
+void computeTwist(const tf::Transform & W_T_Bp, const tf::Transform &W_T_Bc, double dt, geometry_msgs::Twist &twist);
+
+void transformTwist(const tf::Transform & L_T_B, geometry_msgs::Twist &v_B);
 } // namespace scan_tools
 
 #endif // LASER_SCAN_MATCHER_LASER_SCAN_MATCHER_H
