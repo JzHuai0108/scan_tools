@@ -75,6 +75,7 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
 
   initParams();
 
+  initMask();  
   // **** state variables
 
   f2b_.setIdentity();
@@ -150,6 +151,10 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
     //   vel_subscriber_ = nh_.subscribe(
     //     "vel", 1, &LaserScanMatcher::velCallback, this);
   }
+
+  if (!nh_private_.getParam ("masked_scan_topic", masked_scan_topic_))
+    masked_scan_topic_ = "masked_scan";
+  pub_masked_scan_ = nh.advertise<sensor_msgs::LaserScan>(masked_scan_topic_, 3);
 }
 
 LaserScanMatcher::~LaserScanMatcher()
@@ -217,6 +222,14 @@ void LaserScanMatcher::initParams()
   if (!nh_private_.getParam ("scan_range_min", scan_range_min_))
     scan_range_min_ = 0.1;
   ROS_INFO_STREAM("Scan range min is " << scan_range_min_);
+  if (!nh_private_.getParam ("mask_radius", mask_radius_))
+    mask_radius_ = 0.3;
+  if (!nh_private_.getParam ("mask_resolution", mask_resolution_))
+    mask_resolution_ = 0.02;
+  if (!nh_private_.getParam ("max_num_update_mask", max_num_update_mask_))
+    max_num_update_mask_ = 20;
+  update_mask_count_ = 0;
+  update_mask_ = true;
   // **** How to publish the output?
   // tf (fixed_frame->base_frame),
   // pose message (pose of base frame in the fixed frame)
@@ -362,6 +375,98 @@ void LaserScanMatcher::initParams()
   // correspondence by 1/sigma^2
   if (!nh_private_.getParam ("use_sigma_weights", input_.use_sigma_weights))
     input_.use_sigma_weights = 0;
+}
+
+void LaserScanMatcher::initMask() {
+  int rows = std::ceil(mask_radius_ * 2 / mask_resolution_);
+  mask_.resize(rows);
+  mask_visited_.resize(rows);
+  for (int i = 0; i < rows; ++i) {
+    mask_[i].resize(rows, 0.4f);
+    mask_visited_[i].resize(rows, false);
+  }
+}
+
+bool LaserScanMatcher::maskCoord(double x, double y, int &r, int &c) const {
+  if (x > mask_radius_ || y > mask_radius_ || x < -mask_radius_ || y < -mask_radius_) {
+    return false;
+  }
+  double invres = 1.0 / mask_resolution_;
+  r = std::floor(mask_.size() / 2 - y * invres);
+  c = std::floor(mask_.size() / 2 + x * invres);
+  return true;
+}
+
+double odds(double p) {
+  return p / (1-p);
+}
+
+double invodds(double o) {
+  return o / (1+o);
+}
+
+double clamp(double v, double lo, double hi) {
+  return v < lo ? lo : hi < v ? hi : v;
+}
+
+int LaserScanMatcher::updateMask(LDP ldp) {
+  // refer to Hess 2016 ICRA real time loop closure in 2d lidar slam.
+  // odds(p) = p / (1- p);
+  // odds^-1(o) = o / (1+o)
+  // M(x) = clamp(odds^-1(odds(M_old(x)) odds(p_hit)))
+  double p_hit = 0.9;
+  double p_miss = 0.4;
+  for (int i = 0; i < mask_visited_.size(); ++i) {
+    std::fill(mask_visited_[i].begin(), mask_visited_[i].end(), false);
+  }
+  int removed = 0;
+  for (int i = 0; i < ldp->nrays; ++i) {
+    if (ldp->valid[i] != 1)
+      continue;
+    double theta = ldp->theta[i];
+    double range = ldp->readings[i];
+    double ct = cos(theta);
+    double st = sin(theta);
+    double x = range * ct;
+    double y = range * st;
+    int r, c;
+    if (maskCoord(x, y, r, c)) {
+      mask_visited_[r][c] = true;
+      if (update_mask_)
+        mask_[r][c] = clamp(invodds(odds(mask_[r][c]) * odds(p_hit)), 0.0, 1.0);
+      if (mask_[r][c] > 0.55) {
+        ldp->valid[i] = 0;
+        ldp->readings[i] = -1;
+        ++removed;
+      }
+    }
+  }
+  // update for misses
+  if (update_mask_) {
+    for (int rj = 0; rj < mask_.size(); ++rj) {
+      for (int cj = 0; cj < mask_.size(); ++cj) {
+        if (mask_visited_[rj][cj])
+          continue;
+        mask_[rj][cj] = clamp(invodds(odds(mask_[rj][cj]) * odds(p_miss)), 0.0, 1.0);
+      }
+    }
+    update_mask_count_++;
+  }
+  if (update_mask_count_ > max_num_update_mask_) {
+    update_mask_ = false;
+  }
+  return removed;
+}
+
+void LaserScanMatcher::publishMaskedScan(sensor_msgs::LaserScan::ConstPtr orig_scan, LDP ldp) {
+  sensor_msgs::LaserScan::Ptr scan(new sensor_msgs::LaserScan(*orig_scan));
+  for (int i = 0; i < ldp->nrays; ++i) {
+    if (ldp->valid[i] != 1) {
+      scan->ranges[i] = std::numeric_limits<float>::infinity();
+      scan->intensities[i] = 0;
+    }
+  }
+  pub_masked_scan_.publish(scan);
 }
 
 void LaserScanMatcher::imuCallback(const sensor_msgs::Imu::ConstPtr& imu_msg)
@@ -534,6 +639,10 @@ void LaserScanMatcher::scanCallback (const sensor_msgs::LaserScan::ConstPtr& sca
       MotionCompensation(scan_msg, vel_lidar, curr_ldp_scan);
     }
   }
+  // empirically, masking bad points does not improve over removing bad points by scan_range_min.
+  // int removed = updateMask(curr_ldp_scan);
+  // printf("Masked out points %d.\n", removed);
+  publishMaskedScan(scan_msg, curr_ldp_scan);
   processScan(curr_ldp_scan, scan_msg->header.stamp);
 }
 

@@ -33,6 +33,8 @@ Example launch file: launches the scan matcher with pre-recorded data
     <param name="base_frame" value="base_link"/>
     <param name="fixed_frame" value="odom"/>
     <param name="scan_range_min" value="0.3"/>
+    <param name="mask_radius" value="0.3"/>
+    <param name="mask_resolution" value="0.02"/>
   </node>
 
   <group if="$(arg use_robot_model)">

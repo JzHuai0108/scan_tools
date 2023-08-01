@@ -104,6 +104,14 @@ class LaserScanMatcher
     std::vector<double> position_covariance_;
     std::vector<double> orientation_covariance_;
     double scan_range_min_;
+    double mask_radius_;
+    double mask_resolution_;
+    std::vector<std::vector<float>> mask_;
+    std::vector<std::vector<bool>> mask_visited_;
+    int max_num_update_mask_;
+    int update_mask_count_;
+    bool update_mask_;
+
     bool use_cloud_input_;
 
     double kf_dist_linear_;
@@ -143,6 +151,8 @@ class LaserScanMatcher
 
     geometry_msgs::Twist latest_vel_msg_;
     ros::Time latest_vel_time_;
+    ros::Publisher pub_masked_scan_;
+    std::string masked_scan_topic_;
 
     std::vector<double> a_cos_;
     std::vector<double> a_sin_;
@@ -150,6 +160,11 @@ class LaserScanMatcher
     // **** methods
 
     void initParams();
+    void initMask();
+    bool maskCoord(double x, double y, int &r, int &c) const;
+    int updateMask(LDP ldp);
+    void publishMaskedScan(sensor_msgs::LaserScan::ConstPtr orig_scan, LDP ldp);
+
     void processScan(LDP& curr_ldp_scan, const ros::Time& time);
 
     void laserScanToLDP(const sensor_msgs::LaserScan::ConstPtr& scan_msg,
