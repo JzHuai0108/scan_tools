@@ -75,7 +75,7 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
 
   initParams();
 
-  initMask();  
+  // initMask();  
   // **** state variables
 
   f2b_.setIdentity();
@@ -154,7 +154,7 @@ LaserScanMatcher::LaserScanMatcher(ros::NodeHandle nh, ros::NodeHandle nh_privat
 
   if (!nh_private_.getParam ("masked_scan_topic", masked_scan_topic_))
     masked_scan_topic_ = "masked_scan";
-  pub_masked_scan_ = nh.advertise<sensor_msgs::LaserScan>(masked_scan_topic_, 3);
+  // pub_masked_scan_ = nh.advertise<sensor_msgs::LaserScan>(masked_scan_topic_, 3);
 }
 
 LaserScanMatcher::~LaserScanMatcher()
@@ -642,7 +642,7 @@ void LaserScanMatcher::scanCallback (const sensor_msgs::LaserScan::ConstPtr& sca
   // empirically, masking bad points does not improve over removing bad points by scan_range_min.
   // int removed = updateMask(curr_ldp_scan);
   // printf("Masked out points %d.\n", removed);
-  publishMaskedScan(scan_msg, curr_ldp_scan);
+  // publishMaskedScan(scan_msg, curr_ldp_scan);
   processScan(curr_ldp_scan, scan_msg->header.stamp);
 }
 
@@ -769,6 +769,7 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
       odometry_msg->child_frame_id  = base_frame_;
 
       tf::poseTFToMsg(f2b_, odometry_msg->pose.pose);
+      odometry_msg->twist.twist = latest_vel_msg_;
       odometry_publisher_.publish(odometry_msg);
     }
     if (publish_pose_with_covariance_)
@@ -838,12 +839,10 @@ void LaserScanMatcher::processScan(LDP& curr_ldp_scan, const ros::Time& time)
 
     if (publish_tf_)
     {
+      // we publish odom_T_base_footprint because the robot model has base_footprint as the root coordinate frame.
       tf::Transform odom_T_base_footprint = f2b_ * get_base_link_T_base_footprint("turtlebot3_burger");
       tf::StampedTransform odom_T_base_footprint_stamped(odom_T_base_footprint, time, fixed_frame_, "base_footprint");
       tf_broadcaster_.sendTransform(odom_T_base_footprint_stamped);
-
-      tf::StampedTransform basescan_T_laser_stamped(get_base_scan_T_laser("turtlebot3_burger"), time, "base_scan", laser_frame_);
-      tf_broadcaster_.sendTransform(basescan_T_laser_stamped);
     }
   }
   else
